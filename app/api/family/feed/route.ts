@@ -5,6 +5,9 @@ export async function GET(req: Request) {
   const s = requireSession(req, 'family');
   const sb = supabaseAdmin();
 
+  const { searchParams } = new URL(req.url);
+  const type = (searchParams.get('type') || 'news').toLowerCase();
+
   // get student groups
   const { data: sg } = await sb.from('student_groups')
     .select('group_id, students!inner(family_id)')
@@ -21,7 +24,9 @@ export async function GET(req: Request) {
   (globalPosts||[]).forEach((p:any)=>postIds.add(p.id));
 
   const ids = Array.from(postIds);
-  const posts = ids.length ? (await sb.from('posts').select('*').in('id', ids).order('created_at',{ascending:false}).limit(30)).data : (globalPosts||[]);
+  let posts = ids.length ? (await sb.from('posts').select('*').in('id', ids).order('created_at',{ascending:false}).limit(60)).data : (globalPosts||[]);
+  // Filtre per tipus (news | alert | menu). Si la columna no existeix encara, es considerarà 'news'.
+  posts = (posts || []).filter((p:any)=> ((p.type || 'news').toLowerCase() === type) && !p.archived);
   const { data: atts } = await sb.from('post_attachments').select('*').in('post_id', ids);
 
   // determine "new" based on family last_seen_posts_at
@@ -29,11 +34,30 @@ export async function GET(req: Request) {
   const lastSeen = fam?.last_seen_posts_at ? new Date(fam.last_seen_posts_at).getTime() : 0;
 
   const byPost: Record<string, any[]> = {};
-  (atts||[]).forEach((a:any)=>{ (byPost[a.post_id] ||= []).push(a); });
+  // Afegim signedUrl perquè les famílies puguin obrir adjunts encara que el bucket sigui privat.
+  for (const a of (atts || [])) {
+    let signed_url: string | null = null;
+    if (a.storage_path) {
+      const { data } = await sb.storage.from(a.bucket || 'adjunts').createSignedUrl(a.storage_path, 60 * 60 * 24);
+      signed_url = data?.signedUrl || null;
+    }
+    (byPost[a.post_id] ||= []).push({ ...a, signed_url });
+  }
+
+  // Marcat "llegit" pels avisos
+  let read = new Set<string>();
+  if (type === 'alert' && (posts||[]).length) {
+    const { data: reads } = await sb.from('post_reads')
+      .select('post_id')
+      .eq('family_id', s.family_id!)
+      .in('post_id', (posts||[]).map((p:any)=>p.id));
+    (reads||[]).forEach((r:any)=>read.add(r.post_id));
+  }
 
   const out = (posts||[]).map((p:any)=>({
     ...p,
     is_new: new Date(p.created_at).getTime() > lastSeen,
+    is_read: type === 'alert' ? read.has(p.id) : undefined,
     attachments: byPost[p.id] || []
   }));
 

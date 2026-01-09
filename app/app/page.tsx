@@ -29,7 +29,7 @@ function useApi(path:string, deps:any[] = []) {
 export default function AppPage() {
   const [lang, setLang] = useState<Lang>('ca');
   const [session, setSession] = useState<Session>(null);
-  const [tab, setTab] = useState<'login'|'signup'|'news'|'surveys'|'children'|'family'|'settings'|'admin'>('login');
+  const [tab, setTab] = useState<'login'|'signup'|'news'|'alerts'|'menu'|'surveys'|'children'|'family'|'settings'|'admin'>('login');
   const [err, setErr] = useState('');
 
   useEffect(()=>{ setLang(readLang()); }, []);
@@ -83,6 +83,8 @@ export default function AppPage() {
       {session?.role==='family' ? (
         <div className="nav" style={{marginTop:12}}>
           <Chip active={tab==='news'} onClick={()=>setTab('news')}>{S.news}</Chip>
+          <Chip active={tab==='alerts'} onClick={()=>setTab('alerts')}>{S.alerts}</Chip>
+          <Chip active={tab==='menu'} onClick={()=>setTab('menu')}>{S.menu}</Chip>
           <Chip active={tab==='surveys'} onClick={()=>setTab('surveys')}>{S.surveys}</Chip>
           <Chip active={tab==='children'} onClick={()=>setTab('children')}>{S.children}</Chip>
           <Chip active={tab==='family'} onClick={()=>setTab('family')}>{S.familyData}</Chip>
@@ -102,6 +104,8 @@ export default function AppPage() {
         {!session && tab==='signup' ? <Signup S={S} onBack={()=>setTab('login')} /> : null}
 
         {session?.role==='family' && tab==='news' ? <News S={S} /> : null}
+        {session?.role==='family' && tab==='alerts' ? <Alerts S={S} /> : null}
+        {session?.role==='family' && tab==='menu' ? <Menu S={S} /> : null}
         {session?.role==='family' && tab==='surveys' ? <Surveys S={S} /> : null}
         {session?.role==='family' && tab==='children' ? <Children S={S} /> : null}
         {session?.role==='family' && tab==='family' ? <Family S={S} /> : null}
@@ -233,35 +237,55 @@ function Signup({S,onBack}:{S:any,onBack:()=>void}) {
   );
 }
 
-function News({S}:{S:any}) {
-  const {data, loading} = useApi('/api/family/feed',[S]);
+function PostsList({S, type, title}:{S:any, type:'news'|'alert'|'menu', title:string}) {
+  const [refresh, setRefresh] = useState(0);
+  const {data, loading} = useApi(`/api/family/feed?type=${type}`,[S,type,refresh]);
   if(loading) return <div className="card"><p className="p">…</p></div>;
   const posts = data?.posts || [];
   return (
     <div className="card">
-      <div className="h1">{S.news}</div>
+      <div className="h1">{title}</div>
       <div className="list">
-        {posts.length===0 ? <p className="p">{S.noItems}</p> : posts.map((p:any)=>(
-          <div className="item" key={p.id}>
-            <h3>{p.title}</h3>
-            <div className="small">{p.body}</div>
-            <div className="meta">
-              <span className="badge">{new Date(p.created_at).toLocaleString()}</span>
-              {p.is_new ? <span className="badge">{S.markNew}</span> : null}
-            </div>
-            {p.attachments?.length ? (
+        {posts.length===0 ? <p className="p">{S.noItems}</p> : posts.map((p:any)=>{
+          const atts = p.attachments || [];
+          return (
+            <div className="item" key={p.id}>
+              <h3>{p.title}</h3>
+              {p.body ? <div className="small">{p.body}</div> : null}
               <div className="meta">
-                {p.attachments.map((a:any)=>(
-                  <a key={a.id} className="badge" href={a.public_url} target="_blank" rel="noreferrer">📎 {a.filename}</a>
-                ))}
+                <span className="badge">{new Date(p.created_at).toLocaleString()}</span>
+                {p.is_new ? <span className="badge">{S.markNew}</span> : null}
+                {type==='alert' ? (
+                  p.is_read
+                    ? <span className="badge">OK</span>
+                    : <button
+                        className="btn secondary"
+                        onClick={async()=>{
+                          await fetch('/api/family/mark-read',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({post_id:p.id})});
+                          setRefresh(x=>x+1);
+                        }}
+                      >{S.markRead}</button>
+                ) : null}
               </div>
-            ) : null}
-          </div>
-        ))}
+              {atts.length ? (
+                <div className="meta">
+                  {atts.map((a:any)=>{
+                    const href = a.signed_url || a.public_url;
+                    return <a key={a.id} className="badge" href={href} target="_blank" rel="noreferrer">📎 {a.filename}</a>
+                  })}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
 }
+
+function News({S}:{S:any}){ return <PostsList S={S} type="news" title={S.news} />; }
+function Alerts({S}:{S:any}){ return <PostsList S={S} type="alert" title={S.alerts} />; }
+function Menu({S}:{S:any}){ return <PostsList S={S} type="menu" title={S.menu} />; }
 
 function Surveys({S}:{S:any}) {
   const {data, loading} = useApi('/api/family/surveys',[S]);
@@ -401,7 +425,7 @@ function Settings({S, session}:{S:any, session:any}) {
 function Admin({S}:{S:any}) {
   const {data, loading} = useApi('/api/admin/dashboard',[S]);
   const [msg,setMsg]=useState('');
-  const [post,setPost]=useState({title:'',body:'',group_ids:[] as string[]});
+  const [post,setPost]=useState({title:'',body:'',type:'news' as 'news'|'alert'|'menu',group_ids:[] as string[]});
   const [survey,setSurvey]=useState({title:'',question:'',options:'Sí;No',group_ids:[] as string[]});
   if(loading) return <div className="card"><p className="p">…</p></div>;
   const groups = data?.groups || [];
@@ -452,6 +476,14 @@ function Admin({S}:{S:any}) {
           <div className="h1" style={{fontSize:18}}>{S.createPost}</div>
           <div style={{marginTop:10}}><label>{S.title}</label><input value={post.title} onChange={e=>setPost({...post,title:e.target.value})}/></div>
           <div style={{marginTop:10}}><label>{S.body}</label><textarea value={post.body} onChange={e=>setPost({...post,body:e.target.value})}/></div>
+          <div style={{marginTop:10}}>
+            <label>Tipus</label>
+            <select value={post.type} onChange={e=>setPost({...post,type:e.target.value as any})}>
+              <option value="news">Notícies</option>
+              <option value="alert">Avisos</option>
+              <option value="menu">Menú</option>
+            </select>
+          </div>
           <div style={{marginTop:10}}>
             <label>{S.groups}</label>
             <div className="nav">
