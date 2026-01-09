@@ -534,7 +534,28 @@ function Admin({S}:{S:any}) {
                 {p.attachments?.length ? (
                   <div className="meta">
                     {p.attachments.map((a:any)=>(
-                      <a key={a.id} className="badge" href={a.public_url} target="_blank" rel="noreferrer">📎 {a.filename}</a>
+                      <button
+                        key={a.id}
+                        className="badge"
+                        style={{cursor:'pointer'}}
+                        onClick={async()=>{
+                          try{
+                            // Use signed URL so families can open PDFs/images even if bucket is private
+                            const qs = new URLSearchParams({ path: a.storage_path, bucket: 'adjunts' });
+                            const res = await fetch(`/api/file/signed-url?${qs.toString()}`);
+                            const j = await res.json();
+                            if(j?.ok && j.url){
+                              window.open(j.url, '_blank', 'noreferrer');
+                            } else {
+                              alert(j?.error || 'No es pot obrir el fitxer');
+                            }
+                          }catch(e:any){
+                            alert('No es pot obrir el fitxer');
+                          }
+                        }}
+                      >
+                        📎 {a.filename}
+                      </button>
                     ))}
                   </div>
                 ) : null}
